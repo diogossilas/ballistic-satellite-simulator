@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-main: #0a0a0c;
+    --bg-darker: #050506;
+    --bg-surface: #121215;
+    --bg-surface-elevated: #18181c;
+    --border-color: #27272a;
+    --border-bright: #3f3f46;
+    --text-primary: #f4f4f5;
+    --text-secondary: #d1d1d1;
+    --text-muted: #71717a;
+    --accent: #f59e0b;
+    --accent-glow: rgba(245, 158, 11, 0.15);
+    --cyan-accent: #06b6d4;
+    --green-accent: #10b981;
+  }
+
+  body {
+    background-color: #0a0a0c;
+    color: #d1d1d1;
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    overflow-x: hidden;
+  }
+}
+
+/* Technical Dashboard Grid Background */
+.tech-grid {
+  background-color: #0a0a0c;
+  background-image: 
+    linear-gradient(to right, rgba(39, 39, 42, 0.25) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(39, 39, 42, 0.25) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.tech-grid-dense {
+  background-color: #0a0a0c;
+  background-image: 
+    linear-gradient(to right, rgba(39, 39, 42, 0.35) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(39, 39, 42, 0.35) 1px, transparent 1px);
+  background-size: 12px 12px;
+}
+
+.tech-dots {
+  background-color: #0a0a0c;
+  background-image: radial-gradient(rgba(245, 158, 11, 0.15) 1px, transparent 0);
+  background-size: 20px 20px;
+}
+
+/* Custom Scrollbar for Technical Data Grid */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0a0a0c;
+  border-left: 1px solid #1f2024;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+/* Technical HUD Glows and Border Effects */
+.tech-card {
+  background-color: #121215;
+  border: 1px solid #27272a;
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
+}
+
+.tech-card-hover {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.tech-card-hover:hover {
+  border-color: #3f3f46;
+  background-color: #16161a;
+}
+
+.tech-border-amber {
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.tech-border-amber:hover {
+  border-color: rgba(245, 158, 11, 0.6);
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.1);
+}

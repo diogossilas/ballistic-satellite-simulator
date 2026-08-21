@@ -1,0 +1,6 @@
+{
+  "name": "Simulador Balístico Fictício",
+  "description": "Aplicativo educacional e interativo de física balística, mecânica orbital e aerodinâmica em cenários fictícios.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
