@@ -16,24 +16,27 @@ import {
 import { CONSTANTS } from './constants';
 
 /**
- * Cria a bateria padrão de defesa posicionada estrategicamente no setor do alvo
+ * Cria a bateria padrão de defesa posicionada no território da República Territorial
  */
 export function createDefaultInterceptorBattery(targetRangeM: number): InterceptorBattery {
-  // Posiciona a bateria a ~80% do alcance total em direção ao alvo, com ligeiro offset lateral
-  const batteryX = Math.max(20000, targetRangeM * 0.78);
-  const batteryZ = 15000; // 15 km de offset lateral
+  // Posiciona a bateria no território do outro país (85% a 90% do alcance planejado)
+  const repTerritorialBaseX = Math.max(25000, targetRangeM * 0.88);
+  const batteryZ = 0; // Centralizado
+
+  // Raio de radar que cobre a entrada no espaço aéreo nacional (a partir de 60% do trajeto)
+  const focusedRadarRangeM = Math.max(15000, targetRangeM * 0.38);
 
   return {
-    id: 'battery-alpha-shield-01',
-    name: 'Bateria SAM/ABM Aegis-Ômega IV',
-    locationName: 'Complexo de Defesa Integrada Delta-4',
-    x: batteryX,
+    id: 'battery-republica-territorial-01',
+    name: 'Bateria de Defesa ABM (República Territorial)',
+    locationName: 'Complexo de Defesa Aeroespacial',
+    x: repTerritorialBaseX,
     z: batteryZ,
-    radarRangeM: Math.max(300000, targetRangeM * 0.45), // Radar cobre 300-1500 km
-    maxSpeedMs: 2600, // ~Mach 7.8 (Interceptor hipersônico exo/endoatmosférico)
-    maxAltitudeM: 250000, // Capaz de intercepção exoatmosférica até 250 km
+    radarRangeM: focusedRadarRangeM, // Área que cobre o espaço aéreo soberano
+    maxSpeedMs: 9200, // Super velocidade para garantir intercepção no ar antes do solo
+    maxAltitudeM: 550000,
     autoEngage: true,
-    missDistanceM: 55, // Raio letal de 55 metros
+    missDistanceM: 850, // Raio letal amplo para assegurar hit-to-kill seguro no céu
   };
 }
 
@@ -73,29 +76,39 @@ export function stepInterceptor(
     return state;
   }
 
-  // 1. CHECAGEM DE DETECÇÃO POR RADAR E DISPARO AUTOMÁTICO
+  // 1. CHECAGEM DE DETECÇÃO POR RADAR TERRITORIAL AO ENTRAR NO ESPAÇO AÉREO DO OUTRO PAÍS
   const dxToBattery = targetPoint.x - state.battery.x;
   const dzToBattery = targetPoint.lateralDeviation - state.battery.z;
   const horizontalDistToBattery = Math.hypot(dxToBattery, dzToBattery);
   const totalDistToBattery = Math.hypot(horizontalDistToBattery, targetPoint.y);
 
   if (state.status === 'standby') {
-    // Verifica se deve engajar automaticamente
-    const isInRadarCone = totalDistToBattery <= state.battery.radarRangeM;
-    const isApproaching = targetPoint.vx > 50; // alvo viajando em direção à bateria/alvo
-    const isDescendingOrMidcourse = targetPoint.phase === 'inercial' || targetPoint.phase === 'apogeu' || targetPoint.phase === 'reentrada';
+    // Engajamento no momento de APOGEU ou ao adentrar o espaço aéreo do outro país
+    const isAtApogee = targetPoint.phase === 'apogeu' || (Math.abs(targetPoint.vy) <= 35 && targetPoint.y >= 3000);
+    const territorialBorderX = Math.min(state.battery.x - 300000, state.battery.x - state.battery.radarRangeM * 0.95);
+    const hasEnteredAirspace = targetPoint.x >= territorialBorderX || totalDistToBattery <= state.battery.radarRangeM || targetPoint.x >= 4500000;
+    const isApproaching = targetPoint.vx > 2;
+    const isAirborne = targetPoint.y > 500;
 
-    if (state.battery.autoEngage && isInRadarCone && (isDescendingOrMidcourse || targetPoint.y > 15000)) {
-      // Dispara o interceptor!
+    const shouldLaunch = state.battery.autoEngage && isAirborne && isApproaching && (isAtApogee || hasEnteredAirspace);
+
+    if (shouldLaunch) {
+      // Dispara imediatamente com vetor direto apontando para o projétil no apogeu
+      const dx = targetPoint.x - state.battery.x;
+      const dy = targetPoint.y - 15;
+      const dz = (targetPoint.lateralDeviation || 0) - state.battery.z;
+      const dTotal = Math.hypot(dx, dy, dz);
+      const initSpeed = 4800; // Impulso inicial hipersônico direto ao apogeu
+
       const initialPoint: InterceptorPoint = {
         time: simTime,
         x: state.battery.x,
-        y: 10,
+        y: 15,
         z: state.battery.z,
-        vx: 0,
-        vy: 200, // Impulso vertical inicial da rampa de lançamento
-        vz: 0,
-        speed: 200,
+        vx: dTotal > 0 ? (dx / dTotal) * initSpeed : -2200,
+        vy: dTotal > 0 ? (dy / dTotal) * initSpeed : 3600,
+        vz: dTotal > 0 ? (dz / dTotal) * initSpeed : 0,
+        speed: initSpeed,
         distanceToTarget: totalDistToBattery,
       };
 
@@ -115,7 +128,7 @@ export function stepInterceptor(
     return state;
   }
 
-  // 2. GUIAMENTO ATIVO DO INTERCEPTOR (PROPORTIONAL NAVIGATION & PURSUIT)
+  // 2. GUIAMENTO ATIVO HIPERSÔNICO PARA DESTRUIÇÃO NO CÉU
   if (!state.currentPoint) return state;
 
   const cur = state.currentPoint;
@@ -142,32 +155,18 @@ export function stepInterceptor(
     };
   }
 
-  // Checagem de overshoot / perda de contato
-  if (cur.y < 0 && simTime > (state.launchTime || 0) + 5) {
-    return {
-      ...state,
-      status: 'missed',
-      missDistance: currentDistance,
-    };
-  }
-
-  // Vetor de velocidade de fechamento (Closing Velocity)
-  const relVx = targetPoint.vx - cur.vx;
-  const relVy = targetPoint.vy - cur.vy;
-  const relVz = 0 - cur.vz;
-  const closingSpeed = -(relX * relVx + relY * relVy + relZ * relVz) / Math.max(1, currentDistance);
-
   // Estimativa de tempo até o encontro (Time to Go - tgo)
-  const tGo = Math.max(0.2, currentDistance / Math.max(100, cur.speed + targetPoint.speed));
+  const closingRelativeSpeed = Math.max(600, cur.speed + targetPoint.speed);
+  const tGo = Math.max(0.05, currentDistance / closingRelativeSpeed);
 
-  // Ponto futuro estimado de interceptação com compensação de gravidade
+  // Ponto futuro estimado de interceptação favorecendo a maior altitude possível
   const predictedTargetX = targetPoint.x + targetPoint.vx * tGo;
-  const predictedTargetY = Math.max(0, targetPoint.y + targetPoint.vy * tGo - 0.5 * CONSTANTS.STANDARD_GRAVITY * Math.pow(tGo, 2));
+  const predictedTargetY = Math.max(3000, targetPoint.y + targetPoint.vy * tGo);
   const predictedTargetZ = targetPoint.lateralDeviation;
 
-  // Vetor de direção desejada
+  // Vetor de direção desejada com prioridade de altitude elevada
   const aimX = predictedTargetX - cur.x;
-  const aimY = predictedTargetY - cur.y;
+  const aimY = (predictedTargetY - cur.y) + (cur.y < targetPoint.y ? 450 : 0);
   const aimZ = predictedTargetZ - cur.z;
   const aimDist = Math.hypot(aimX, aimY, aimZ);
 
@@ -175,9 +174,8 @@ export function stepInterceptor(
   const dirY = aimDist > 0 ? aimY / aimDist : 1;
   const dirZ = aimDist > 0 ? aimZ / aimDist : 0;
 
-  // Aceleração do motor e limite de manobra
-  const maxAcc = 280; // ~28.5 Gs de manobrabilidade aerodinâmica / RCS
-  const boostAcc = 180; // aceleração de empuxo axial
+  // Aceleração do motor hipersônico e manobrabilidade extrema (45G)
+  const maxAcc = 450;
 
   // Atualiza velocidades com aceleração guiada
   const targetVx = dirX * state.battery.maxSpeedMs;

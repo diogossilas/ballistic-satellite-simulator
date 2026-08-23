@@ -17,6 +17,7 @@ import {
   SimulationSummary,
   InterceptorState,
   InterceptorPoint,
+  SatelliteDefenseSystemState,
 } from '../../types/physics';
 import {
   createInitialState,
@@ -29,6 +30,11 @@ import {
   createInitialInterceptorState,
   stepInterceptor,
 } from '../../physics/interceptor';
+import {
+  createInitialSatelliteDefenseState,
+  stepSatelliteDefense,
+  triggerKineticBombardment,
+} from '../../physics/satelliteDefense';
 
 export interface UseSimulationEngineOptions {
   projectile: ProjectileConfig;
@@ -44,6 +50,7 @@ export interface UseSimulationEngineReturn {
   fullTrajectory: TelemetryPoint[];
   summary: SimulationSummary | null;
   interceptorState: InterceptorState;
+  satelliteDefenseState: SatelliteDefenseSystemState;
   setTimeScale: (scale: number) => void;
   togglePlayPause: () => void;
   stepForward: () => void;
@@ -53,6 +60,7 @@ export interface UseSimulationEngineReturn {
   loadInitialStateForConfig: (proj: ProjectileConfig, env: PlanetaryEnvironment) => void;
   toggleInterceptorAutoEngage: () => void;
   manualLaunchInterceptor: () => void;
+  triggerManualKineticStrike: () => void;
 }
 
 export function useSimulationEngine({
@@ -72,11 +80,17 @@ export function useSimulationEngine({
     createInitialInterceptorState(createDefaultInterceptorBattery(projectile.targetRangeKm * 1000))
   );
 
+  // Estado do Sistema de Satélites de Defesa e Varas de Deus
+  const [satelliteDefenseState, setSatelliteDefenseState] = useState<SatelliteDefenseSystemState>(() =>
+    createInitialSatelliteDefenseState(projectile.targetRangeKm * 1000)
+  );
+
   // Refs de sincronização rápida para o loop de requestAnimationFrame
   const isRunningRef = useRef<boolean>(isRunning);
   const timeScaleRef = useRef<number>(timeScale);
   const currentStateRef = useRef<StateVector>(currentState);
   const interceptorStateRef = useRef<InterceptorState>(interceptorState);
+  const satelliteDefenseStateRef = useRef<SatelliteDefenseSystemState>(satelliteDefenseState);
   const projectileRef = useRef<ProjectileConfig>(projectile);
   const environmentRef = useRef<PlanetaryEnvironment>(environment);
   const animationFrameRef = useRef<number | null>(null);
@@ -98,6 +112,10 @@ export function useSimulationEngine({
   }, [interceptorState]);
 
   useEffect(() => {
+    satelliteDefenseStateRef.current = satelliteDefenseState;
+  }, [satelliteDefenseState]);
+
+  useEffect(() => {
     projectileRef.current = projectile;
   }, [projectile]);
 
@@ -105,7 +123,7 @@ export function useSimulationEngine({
     environmentRef.current = environment;
   }, [environment]);
 
-  // Recalcula a trajetória completa planejada de referência
+  // Recalcula a trajetória completa planejada de referência e inicializa na plataforma
   const recalculatePlannedTrajectory = useCallback(() => {
     const { telemetryHistory: planned } = runFullSimulation(
       projectileRef.current,
@@ -114,6 +132,10 @@ export function useSimulationEngine({
       0.2
     );
     setFullTrajectory(planned);
+    if (planned.length > 0 && (!currentStateRef.current || currentStateRef.current.time === 0 || currentStateRef.current.phase === 'pronto')) {
+      setCurrentTelemetry(planned[0]);
+      setTelemetryHistory([planned[0]]);
+    }
   }, []);
 
   // Inicialização quando a configuração muda
@@ -132,6 +154,10 @@ export function useSimulationEngine({
     const initInterceptor = createInitialInterceptorState(newBattery);
     setInterceptorState(initInterceptor);
     interceptorStateRef.current = initInterceptor;
+
+    const initSatellites = createInitialSatelliteDefenseState(projectileRef.current.targetRangeKm * 1000);
+    setSatelliteDefenseState(initSatellites);
+    satelliteDefenseStateRef.current = initSatellites;
 
     const { telemetryHistory: initialRun } = runFullSimulation(
       projectileRef.current,
@@ -157,6 +183,10 @@ export function useSimulationEngine({
     const initInterceptor = createInitialInterceptorState(newBattery);
     setInterceptorState(initInterceptor);
     interceptorStateRef.current = initInterceptor;
+
+    const initSatellites = createInitialSatelliteDefenseState(proj.targetRangeKm * 1000);
+    setSatelliteDefenseState(initSatellites);
+    satelliteDefenseStateRef.current = initSatellites;
 
     const { telemetryHistory: planned } = runFullSimulation(proj, env, 3600, 0.2);
     setFullTrajectory(planned);
@@ -192,9 +222,9 @@ export function useSimulationEngine({
         y: 10,
         z: prev.battery.z,
         vx: 0,
-        vy: 300,
+        vy: 400,
         vz: 0,
-        speed: 300,
+        speed: 400,
         distanceToTarget: 100000,
       };
       const launched: InterceptorState = {
@@ -206,6 +236,19 @@ export function useSimulationEngine({
       };
       interceptorStateRef.current = launched;
       return launched;
+    });
+  }, []);
+
+  // Disparo manual de Retaliação das Varas de Deus (Project Thor)
+  const triggerManualKineticStrike = useCallback(() => {
+    setSatelliteDefenseState((prev) => {
+      const triggered = triggerKineticBombardment(
+        prev,
+        currentStateRef.current.time,
+        projectileRef.current.targetRangeKm
+      );
+      satelliteDefenseStateRef.current = triggered;
+      return triggered;
     });
   }, []);
 
@@ -221,64 +264,92 @@ export function useSimulationEngine({
 
   // Avança 1 passo numérico discretizado
   const stepForward = useCallback(() => {
-    if (currentStateRef.current.phase === 'impactado' || currentStateRef.current.phase === 'destruido') return;
     const dt = 0.1;
-    const { nextState, telemetry } = stepRK4(
-      currentStateRef.current,
-      projectileRef.current,
-      environmentRef.current,
-      dt
-    );
-
-    // Passo do interceptor
-    const nextInterceptor = stepInterceptor(
+    const st = currentStateRef.current;
+    
+    // Passo dos satélites e Varas de Deus
+    let curSat = satelliteDefenseStateRef.current;
+    curSat = stepSatelliteDefense(
+      curSat,
+      currentTelemetry,
       interceptorStateRef.current,
-      telemetry,
+      environmentRef.current,
       dt,
-      nextState.time
+      st.time,
+      projectileRef.current.targetRangeKm
     );
-    interceptorStateRef.current = nextInterceptor;
-    setInterceptorState(nextInterceptor);
+    satelliteDefenseStateRef.current = curSat;
+    setSatelliteDefenseState(curSat);
 
-    if (nextInterceptor.status === 'intercepted') {
-      const interceptedState: StateVector = {
-        ...nextState,
-        phase: 'destruido',
-      };
-      setCurrentState(interceptedState);
-      currentStateRef.current = interceptedState;
-      const interceptedTel: TelemetryPoint = {
-        ...telemetry,
-        phase: 'destruido',
-      };
-      setCurrentTelemetry(interceptedTel);
-      setTelemetryHistory((prev) => [...prev, interceptedTel]);
-
-      const { summary: finalSummary } = runFullSimulation(
+    if (st.phase !== 'impactado' && st.phase !== 'destruido') {
+      const { nextState, telemetry } = stepRK4(
+        st,
         projectileRef.current,
         environmentRef.current,
-        3600,
-        0.1
+        dt
       );
-      setSummary(finalSummary);
-      return;
-    }
 
-    setCurrentState(nextState);
-    currentStateRef.current = nextState;
-    setCurrentTelemetry(telemetry);
-    setTelemetryHistory((prev) => [...prev, telemetry]);
-
-    if (nextState.phase === 'impactado') {
-      const { summary: completedSummary } = runFullSimulation(
-        projectileRef.current,
-        environmentRef.current,
-        3600,
-        0.1
+      // Passo do interceptor
+      const nextInterceptor = stepInterceptor(
+        interceptorStateRef.current,
+        telemetry,
+        dt,
+        nextState.time
       );
-      setSummary(completedSummary);
+      interceptorStateRef.current = nextInterceptor;
+      setInterceptorState(nextInterceptor);
+
+      // DESTRUIÇÃO MÚTUA NO CÉU
+      if (nextInterceptor.status === 'intercepted') {
+        const interceptedState: StateVector = {
+          ...nextState,
+          phase: 'destruido',
+        };
+        setCurrentState(interceptedState);
+        currentStateRef.current = interceptedState;
+        const interceptedTel: TelemetryPoint = {
+          ...telemetry,
+          phase: 'destruido',
+          midAirDestroyed: true,
+        };
+        setCurrentTelemetry(interceptedTel);
+        setTelemetryHistory((prev) => [...prev, interceptedTel]);
+
+        // Dispara retaliação cinética de todos os satélites Thor (Varas de Deus)
+        const retaliatedSat = triggerKineticBombardment(
+          curSat,
+          nextState.time,
+          projectileRef.current.targetRangeKm
+        );
+        satelliteDefenseStateRef.current = retaliatedSat;
+        setSatelliteDefenseState(retaliatedSat);
+
+        const { summary: finalSummary } = runFullSimulation(
+          projectileRef.current,
+          environmentRef.current,
+          3600,
+          0.1
+        );
+        setSummary(finalSummary);
+        return;
+      }
+
+      setCurrentState(nextState);
+      currentStateRef.current = nextState;
+      setCurrentTelemetry(telemetry);
+      setTelemetryHistory((prev) => [...prev, telemetry]);
+
+      if (nextState.phase === 'impactado') {
+        const { summary: completedSummary } = runFullSimulation(
+          projectileRef.current,
+          environmentRef.current,
+          3600,
+          0.1
+        );
+        setSummary(completedSummary);
+      }
     }
-  }, []);
+  }, [currentTelemetry]);
 
   // Execução analítica instantânea
   const runInstant = useCallback((): SimulationSummary => {
@@ -300,6 +371,16 @@ export function useSimulationEngine({
       y: 0,
       phase: 'impactado',
     }));
+
+    // Trigger kinetic rods in satellite state as well
+    const retaliatedSat = triggerKineticBombardment(
+      satelliteDefenseStateRef.current,
+      completedSummary.totalFlightTime,
+      projectileRef.current.targetRangeKm
+    );
+    satelliteDefenseStateRef.current = retaliatedSat;
+    setSatelliteDefenseState(retaliatedSat);
+
     setSummary(completedSummary);
     return completedSummary;
   }, []);
@@ -312,81 +393,103 @@ export function useSimulationEngine({
       const deltaRealSec = Math.min(0.1, (currentTime - lastTime) / 1000);
       lastTime = currentTime;
 
-      if (
-        isRunningRef.current &&
-        currentStateRef.current.phase !== 'impactado' &&
-        currentStateRef.current.phase !== 'destruido'
-      ) {
-        const dtStep = 0.05; // Passo de tempo base do integrador RK4
+      const hasActiveRods = satelliteDefenseStateRef.current.rods.some((r) => r.status !== 'impacted');
+      let isMissileActive = currentStateRef.current.phase !== 'impactado' && currentStateRef.current.phase !== 'destruido';
+
+      if (isRunningRef.current && (isMissileActive || hasActiveRods)) {
+        // Passo de tempo hiper-estável para RK4 (máximo 0.03s por sub-passo)
         const totalSimTimeThisFrame = deltaRealSec * timeScaleRef.current;
-        const subSteps = Math.max(1, Math.min(20, Math.round(totalSimTimeThisFrame / dtStep)));
-        const actualDt = totalSimTimeThisFrame / subSteps;
+        const subSteps = Math.max(1, Math.min(60, Math.ceil(totalSimTimeThisFrame / 0.025)));
+        const actualDt = Math.min(0.025, totalSimTimeThisFrame / subSteps);
 
         let st = currentStateRef.current;
         let lastTel: TelemetryPoint | null = null;
         let curInterceptor = interceptorStateRef.current;
+        let curSatellites = satelliteDefenseStateRef.current;
         const newPoints: TelemetryPoint[] = [];
 
         for (let i = 0; i < subSteps; i++) {
-          const { nextState, telemetry } = stepRK4(
-            st,
-            projectileRef.current,
+          // Atualização física dos satélites e Varas de Deus
+          curSatellites = stepSatelliteDefense(
+            curSatellites,
+            lastTel || currentTelemetry,
+            curInterceptor,
             environmentRef.current,
-            actualDt
+            actualDt,
+            st.time,
+            projectileRef.current.targetRangeKm
           );
-          st = nextState;
-          lastTel = telemetry;
-          newPoints.push(telemetry);
 
-          // Integração do interceptor
-          curInterceptor = stepInterceptor(curInterceptor, telemetry, actualDt, st.time);
+          if (isMissileActive) {
+            const { nextState, telemetry } = stepRK4(
+              st,
+              projectileRef.current,
+              environmentRef.current,
+              actualDt
+            );
+            st = nextState;
+            lastTel = telemetry;
+            newPoints.push(telemetry);
 
-          // Caso de Intercepção Bem Sucedida (Hit-to-Kill)
-          if (curInterceptor.status === 'intercepted') {
-            st = {
-              ...st,
-              phase: 'destruido',
-            };
-            lastTel = {
-              ...telemetry,
-              phase: 'destruido',
-            };
-            isRunningRef.current = false;
-            setIsRunning(false);
+            // Integração do interceptor
+            curInterceptor = stepInterceptor(curInterceptor, telemetry, actualDt, st.time);
 
-            try {
-              confetti({
-                particleCount: 70,
-                spread: 90,
-                origin: { y: 0.5 },
-                colors: ['#10b981', '#06b6d4', '#f59e0b', '#ef4444'],
-              });
-            } catch {
-              // fallback silencioso
+            // DESTRUIÇÃO MÚTUA NO CÉU (Ambos os mísseis se destroem em contato)
+            if (curInterceptor.status === 'intercepted') {
+              st = {
+                ...st,
+                phase: 'destruido',
+              };
+              lastTel = {
+                ...telemetry,
+                phase: 'destruido',
+                midAirDestroyed: true,
+              };
+
+              isMissileActive = false;
+
+              // Dispara retaliação cinética com "Varas de Deus" de todos os satélites Thor
+              if (!curSatellites.retaliationTriggered) {
+                curSatellites = triggerKineticBombardment(
+                  curSatellites,
+                  st.time,
+                  projectileRef.current.targetRangeKm
+                );
+              }
+
+              try {
+                confetti({
+                  particleCount: 70,
+                  spread: 100,
+                  origin: { y: 0.45 },
+                  colors: ['#10b981', '#06b6d4', '#f59e0b', '#ef4444', '#f97316'],
+                });
+              } catch {
+                // fallback silencioso
+              }
             }
-            break;
-          }
 
-          if (st.phase === 'impactado') {
-            isRunningRef.current = false;
-            setIsRunning(false);
-
-            try {
-              confetti({
-                particleCount: 40,
-                spread: 60,
-                origin: { y: 0.8 },
-                colors: ['#06b6d4', '#f59e0b', '#3b82f6'],
-              });
-            } catch {
-              // fallback silencioso
+            if (st.phase === 'impactado') {
+              isMissileActive = false;
+              try {
+                confetti({
+                  particleCount: 40,
+                  spread: 60,
+                  origin: { y: 0.8 },
+                  colors: ['#06b6d4', '#f59e0b', '#3b82f6'],
+                });
+              } catch {
+                // fallback silencioso
+              }
             }
-            break;
           }
         }
 
         interceptorStateRef.current = curInterceptor;
         setInterceptorState(curInterceptor);
+
+        satelliteDefenseStateRef.current = curSatellites;
+        setSatelliteDefenseState(curSatellites);
 
         currentStateRef.current = st;
         setCurrentState(st);
@@ -395,7 +498,12 @@ export function useSimulationEngine({
           setTelemetryHistory((prev) => [...prev, ...newPoints]);
         }
 
-        if (st.phase === 'impactado' || st.phase === 'destruido') {
+        // Se o míssil terminou e todas as Varas de Deus já impactaram, finaliza a simulação
+        const allRodsDone = curSatellites.rods.length > 0 && curSatellites.rods.every((r) => r.status === 'impacted');
+        if (!isMissileActive && (!curSatellites.retaliationTriggered || allRodsDone)) {
+          isRunningRef.current = false;
+          setIsRunning(false);
+
           const { summary: finalSummary } = runFullSimulation(
             projectileRef.current,
             environmentRef.current,
@@ -414,7 +522,7 @@ export function useSimulationEngine({
     return () => {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     };
-  }, []);
+  }, [currentTelemetry]);
 
   return {
     isRunning,
@@ -425,6 +533,7 @@ export function useSimulationEngine({
     fullTrajectory,
     summary,
     interceptorState,
+    satelliteDefenseState,
     setTimeScale,
     togglePlayPause,
     stepForward,
@@ -434,5 +543,6 @@ export function useSimulationEngine({
     loadInitialStateForConfig,
     toggleInterceptorAutoEngage,
     manualLaunchInterceptor,
+    triggerManualKineticStrike,
   };
 }

@@ -43,7 +43,7 @@ export function useSimulationConfig(
   const [environment, setEnvironment] = useState<PlanetaryEnvironment>(() => defaultPreset.environment);
 
   // Estados de visualização e renderização
-  const [viewMode, setViewMode] = useState<ViewMode>('orbital');
+  const [viewMode, setViewMode] = useState<ViewMode>('view25d');
   const [showVectors, setShowVectors] = useState<boolean>(true);
   const [showAtmosphereLayers, setShowAtmosphereLayers] = useState<boolean>(true);
   const [autoFollow, setAutoFollow] = useState<boolean>(false);

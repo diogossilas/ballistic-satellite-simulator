@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { TelemetryPoint, FlightPhase } from '../types/physics';
+import { TelemetryPoint, FlightPhase, SatelliteDefenseSystemState } from '../types/physics';
 import { 
   Gauge, 
   ArrowUpRight, 
@@ -15,19 +15,23 @@ import {
   Zap, 
   Compass, 
   Radio,
-  Timer
+  Timer,
+  Satellite,
+  Target,
 } from 'lucide-react';
 
 interface TelemetryHUDProps {
   telemetry: TelemetryPoint | null;
   maxAltitude: number;
   maxSpeed: number;
+  satelliteDefenseState?: SatelliteDefenseSystemState;
 }
 
 export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
   telemetry,
   maxAltitude,
   maxSpeed,
+  satelliteDefenseState,
 }) => {
   if (!telemetry) {
     return (
@@ -58,7 +62,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
       case 'impactado':
         return { text: 'IMPACTO TERMINAL', bg: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' };
       case 'destruido':
-        return { text: 'CRÍTICO / FORÇAS EXTREMAS', bg: 'bg-red-950/60 text-red-300 border-red-700' };
+        return { text: 'ALVO INTERCEPTADO / ABATIDO', bg: 'bg-emerald-950/70 text-emerald-300 border-emerald-600' };
       default:
         return { text: 'EM VOO', bg: 'bg-zinc-800 text-zinc-300 border-[#27272a]' };
     }
@@ -69,7 +73,7 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
 
   return (
     <div className="space-y-2.5">
-      {/* Barra de Status Superior com Fase e Tempo */}
+      {/* Barra de Status Superior com Fase, Tempo e Status do Campo Magnético */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 bg-[#121215] border border-[#27272a] rounded-lg shadow-md">
         <div className="flex items-center gap-2">
           <Radio className="w-4 h-4 text-amber-400 animate-pulse" />
@@ -78,7 +82,19 @@ export const TelemetryHUD: React.FC<TelemetryHUDProps> = ({
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {telemetry.midAirDestroyed && (
+            <span className="px-2.5 py-0.5 text-[11px] font-mono font-bold text-emerald-300 bg-emerald-950/80 border border-emerald-500 rounded flex items-center gap-1">
+              <ShieldAlert className="w-3 h-3 text-emerald-400" />
+              COLISÃO MÚTUA NO CÉU (DEFESA REPÚBLICA TERRITORIAL)
+            </span>
+          )}
+          {satelliteDefenseState?.retaliationTriggered && (
+            <span className="px-2.5 py-0.5 text-[11px] font-mono font-bold text-amber-300 bg-amber-950/80 border border-amber-500 rounded flex items-center gap-1">
+              <Flame className="w-3 h-3 text-amber-400 animate-pulse" />
+              VARAS DE DEUS: {satelliteDefenseState.rods.filter(r => r.status === 'impacted').length}/{satelliteDefenseState.rods.length} IMPACTOS DE ÁREA
+            </span>
+          )}
           <span className={`px-2.5 py-0.5 text-[11px] font-mono font-bold uppercase rounded border ${phaseBadge.bg}`}>
             {phaseBadge.text}
           </span>

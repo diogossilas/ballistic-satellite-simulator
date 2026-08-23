@@ -13,6 +13,7 @@ import { Navbar, MainTab } from './components/Navbar';
 import { OverviewSection } from './components/OverviewSection';
 import { CanvasRenderer } from './components/CanvasRenderer';
 import { TelemetryHUD } from './components/TelemetryHUD';
+import { InstructionChainTracker } from './components/InstructionChainTracker';
 import { SimulationControls } from './components/SimulationControls';
 import { ChartsPanel } from './components/ChartsPanel';
 import { ProjectileBuilder } from './components/ProjectileBuilder';
@@ -58,6 +59,7 @@ export default function App() {
     fullTrajectory,
     summary,
     interceptorState,
+    satelliteDefenseState,
     setTimeScale,
     togglePlayPause,
     stepForward,
@@ -66,6 +68,7 @@ export default function App() {
     loadInitialStateForConfig,
     toggleInterceptorAutoEngage,
     manualLaunchInterceptor,
+    triggerManualKineticStrike,
   } = useSimulationEngine({
     projectile,
     environment,
@@ -118,11 +121,28 @@ export default function App() {
         {/* ========================================================= */}
         {activeTab === 'simulador' && (
           <div className="space-y-3 animate-in fade-in duration-200">
+            {/* Sequenciador Tático da Cadeia de Instruções */}
+            <InstructionChainTracker
+              currentTelemetry={currentTelemetry}
+              interceptorState={interceptorState}
+              satelliteDefenseState={satelliteDefenseState}
+              phase={currentState.phase}
+              isRunning={isRunning}
+              targetRangeKm={projectile.targetRangeKm}
+              onStartSimulation={() => {
+                if (currentState.phase === 'impactado' || currentState.phase === 'destruido') {
+                  resetSimulation();
+                }
+                togglePlayPause();
+              }}
+            />
+
             {/* HUD de Instrumentos de Telemetria */}
             <TelemetryHUD
               telemetry={currentTelemetry}
               maxAltitude={maxAltitude}
               maxSpeed={maxSpeed}
+              satelliteDefenseState={satelliteDefenseState}
             />
 
             {/* Renderizador de Canvas 2D / 2.5D */}
@@ -141,8 +161,10 @@ export default function App() {
               autoFollow={autoFollow}
               onToggleAutoFollow={() => setAutoFollow((f) => !f)}
               interceptorState={interceptorState}
+              satelliteDefenseState={satelliteDefenseState}
               onToggleAutoEngage={toggleInterceptorAutoEngage}
               onManualLaunchInterceptor={manualLaunchInterceptor}
+              onTriggerKineticStrike={triggerManualKineticStrike}
             />
 
             {/* Painel de Controles de Reprodução e Escala de Tempo */}

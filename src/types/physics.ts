@@ -105,6 +105,7 @@ export interface TelemetryPoint {
   pitchAngleDeg: number;     // Ângulo de inclinação em relação ao horizonte local (graus)
   phase: FlightPhase;
   lateralDeviation: number;  // Desvio lateral por vento/Coriolis (m)
+  midAirDestroyed?: boolean; // Míssil destruído em colisão no ar com interceptor
 }
 
 export interface SimulationSummary {
@@ -200,3 +201,63 @@ export interface InterceptorState {
   missDistance: number | null;
   killConfirmed: boolean;
 }
+
+export type SatelliteWeaponType = 'rods_from_god';
+export type SatelliteStatus = 'orbiting' | 'locking_target' | 'launching_rod' | 'mission_completed';
+
+export interface OrbitalSatellite {
+  id: string;
+  name: string;
+  code: string;
+  type: SatelliteWeaponType;
+  status: SatelliteStatus;
+  altitudeM: number;         // Altitude orbital LEO (ex: 320.000m a 380.000m)
+  x: number;                 // Posição longitudinal no solo / alcance (m)
+  z: number;                 // Posição lateral / inclinação (m)
+  orbitalSpeedMs: number;    // Velocidade orbital tangencial
+  assignedRegion: 'enemy_territory';
+  rodsLoaded: number;        // Quantidade de "Varas de Deus" (hastes de tungstênio) a bordo
+  rodsLaunched: number;
+  description: string;
+}
+
+export interface KineticRod {
+  id: string;
+  satelliteId: string;
+  satelliteName: string;
+  releaseTime: number;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  speed: number;
+  mach: number;
+  massKg: number;            // Massa da haste de tungstênio puro (ex: 9.000 kg)
+  targetX: number;
+  targetZ: number;
+  targetName: string;
+  status: 'falling' | 'reentering' | 'impacted';
+  impactTime?: number;
+  impactSpeed?: number;
+  impactKineticEnergyJ?: number;
+  impactTntEquivalentTons?: number;
+  craterDiameterM?: number;
+  blastRadiusKm?: number;    // Raio de destruição de área aproximada no mapa
+  history: Array<{ x: number; y: number; z: number; time: number }>;
+}
+
+export interface SatelliteDefenseSystemState {
+  satellites: OrbitalSatellite[];
+  rods: KineticRod[];
+  retaliationTriggered: boolean;
+  retaliationTriggerTime: number | null;
+  totalRodsImpacted: number;
+  totalKineticDamageJoules: number;
+  destroyedAreaSummary?: {
+    totalStructuresDestroyed: number;
+    impactLocations: Array<{ name: string; xKm: number; zKm: number; craterM: number; blastKm: number }>;
+  };
+}
+

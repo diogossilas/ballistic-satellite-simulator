@@ -1,6 +1,6 @@
 {
   "name": "Simulador Balístico Fictício",
-  "description": "Aplicativo educacional e interativo de física balística, mecânica orbital e aerodinâmica em cenários fictícios.",
+  "description": "Simulação aeroespacial simplificada: míssil lançado de um lado passando livremente pelos satélites, interceptado e destruído no ar no espaço aéreo vizinho antes do solo, seguido do bombardeio cinético de retaliação 'Varas de Deus' pelos satélites.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

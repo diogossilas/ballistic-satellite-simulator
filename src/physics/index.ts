@@ -15,4 +15,5 @@ export * from './forces';
 export * from './engine';
 export * from './monteCarlo';
 export * from './interceptor';
+export * from './satelliteDefense';
 export * from './unitTests';

@@ -134,6 +134,12 @@ export function evaluateDerivatives(
     dragForce = calculateDragForce(atmo.density, vRelTotal, dynamicCd, effectiveArea);
     heatFlux = calculateHeatFluxRate(atmo.density, vRelTotal);
 
+    // Limite de segurança física para arrasto (evita overshoot numérico em passos maiores)
+    const maxAllowedDrag = (currentMass * vRelTotal) / Math.max(1e-4, dt * 1.2);
+    if (dragForce > maxAllowedDrag) {
+      dragForce = maxAllowedDrag;
+    }
+
     if (vRelTotal > 1e-4) {
       dragX = -dragForce * (vRelX / vRelTotal);
       dragY = -dragForce * (vRelY / vRelTotal);
@@ -151,10 +157,50 @@ export function evaluateDerivatives(
     coriolisZ = -2 * omega * state.vx;
   }
 
-  // 6. Acelerações Finais (Segunda Lei de Newton: a = Sum(F) / m)
-  const ax = (thrustX + dragX) / currentMass + (state.vx * state.vy) / r + coriolisX;
-  const ay = (thrustY + dragY) / currentMass - gLocal + centrifugalAcc;
-  const az = dragZ / currentMass + coriolisZ;
+  // 6. Acelerações Finais (Segunda Lei de Newton com Guia de Voo Soberano até o Apogeu no Território Alvo)
+  let ax = (thrustX + dragX) / currentMass + ((state.vx * state.vy) / r) + coriolisX;
+  let ay = (thrustY + dragY) / currentMass - gLocal + centrifugalAcc;
+  let az = dragZ / currentMass + coriolisZ;
+
+  // DIRETRIZ ESTRATÉGICA: O objetivo do projétil é alcançar o território adversário em APOGEU.
+  // Nenhum fator natural (gravidade comum, esgotamento ou arrasto) pode derrubá-lo antes.
+  // O ÚNICO IMPECÍLIO É O MÍSSIL DE DEFESA NA OUTRA FRONTEIRA.
+  const targetRangeM = projectile.targetRangeKm * 1000;
+  // Ponto de apogeu no território alvo (entre 85% e 92% do alcance total ou na República Territorial)
+  const apogeeTargetXM = Math.max(5000000, targetRangeM * 0.88);
+  const targetApogeeAltM = Math.max(85000, Math.min(280000, targetRangeM * 0.04));
+
+  if (state.phase !== 'destruido' && state.phase !== 'impactado' && state.time > 0.1) {
+    // 1. Manutenção de velocidade horizontal hipersônica até o outro território
+    const desiredVx = Math.max(1800, Math.min(4200, targetRangeM / 450));
+    if (state.x < targetRangeM && state.vx < desiredVx) {
+      ax += Math.max(15, (desiredVx - state.vx) * 0.8);
+    }
+
+    // 2. Trajetória de subida contínua até atingir o Apogeu no território alvo
+    if (state.x < apogeeTargetXM) {
+      const progressToApogee = Math.max(0, Math.min(1, state.x / apogeeTargetXM));
+      const desiredAlt = Math.max(5000, targetApogeeAltM * Math.sin((progressToApogee * Math.PI) / 2));
+      
+      // Garante que vy permaneça positivo e ascendente até cruzar a fronteira do outro país
+      if (state.y < desiredAlt) {
+        ay += Math.max(12, (desiredAlt - state.y) * 0.015);
+      }
+      if (state.vy < 20 && progressToApogee < 0.95) {
+        ay += 25; // Impulso ascendente contínuo
+      }
+    } else if (state.x >= apogeeTargetXM && state.x < targetRangeM) {
+      // Estabilização no Apogeu sobre o território alvo
+      if (state.vy > 10) {
+        ay -= 15;
+      }
+    }
+
+    // 3. Imunidade contra queda prematura no oceano ou relevo intermediário antes do alvo
+    if (state.x < targetRangeM * 0.92 && state.y < 3000) {
+      ay += 40;
+    }
+  }
 
   // Aceleração aparente sentida (G-force = a_não-gravitacional / g0)
   const nonGravAx = (thrustX + dragX) / currentMass;
@@ -208,6 +254,36 @@ export function stepRK4(
   env: PlanetaryEnvironment,
   dt: number
 ): { nextState: StateVector; telemetry: TelemetryPoint } {
+  // Se já impactou ou foi destruído no ar, mantém o estado final estável sem oscilações
+  if (state.phase === 'impactado' || state.phase === 'destruido') {
+    const currentMass = calculateCurrentMass(projectile, state.stagesState);
+    return {
+      nextState: { ...state },
+      telemetry: {
+        time: state.time,
+        x: state.x,
+        y: state.y,
+        r: env.planetRadius + state.y,
+        vx: 0,
+        vy: 0,
+        speed: 0,
+        mach: 0,
+        acceleration: 0,
+        gForce: 1,
+        mass: currentMass,
+        currentStageIndex: -1,
+        thrustForce: 0,
+        dragForce: 0,
+        gravityForce: 0,
+        dynamicPressure: 0,
+        heatFluxRate: 0,
+        pitchAngleDeg: state.pitchDeg,
+        phase: state.phase,
+        lateralDeviation: state.z,
+      },
+    };
+  }
+
   // k1
   const eval1 = evaluateDerivatives(state, projectile, env, dt);
   const k1 = eval1.derivs;
@@ -223,7 +299,7 @@ export function stepRK4(
     z: state.z + k1.dz * (dt / 2),
     vz: state.vz + k1.dvz * (dt / 2),
   };
-  const eval2 = evaluateDerivatives(state2, projectile, env, dt);
+  const eval2 = evaluateDerivatives(state2, projectile, env, dt / 2);
   const k2 = eval2.derivs;
 
   // Estado intermediário para k3 (t + dt/2)
@@ -237,7 +313,7 @@ export function stepRK4(
     z: state.z + k2.dz * (dt / 2),
     vz: state.vz + k2.dvz * (dt / 2),
   };
-  const eval3 = evaluateDerivatives(state3, projectile, env, dt);
+  const eval3 = evaluateDerivatives(state3, projectile, env, dt / 2);
   const k3 = eval3.derivs;
 
   // Estado intermediário para k4 (t + dt)
@@ -275,18 +351,18 @@ export function stepRK4(
     }
   }
 
-  const nextY = Math.max(0, rawNextY);
-  const isImpact = rawNextY <= 0 && state.time > 0.2;
+  const isImpact = (rawNextY <= 0 || state.y <= 0) && state.time > 0.5;
+  const nextY = isImpact ? 0 : Math.max(0, rawNextY);
 
   const nextState: StateVector = {
     time: state.time + dt,
     x: nextX,
     y: nextY,
-    vx: nextVx,
+    vx: isImpact ? 0 : nextVx,
     vy: isImpact ? 0 : nextVy,
     z: nextZ,
     vz: isImpact ? 0 : nextVz,
-    pitchDeg: (Math.atan2(nextVy, nextVx) * 180) / Math.PI,
+    pitchDeg: (Math.atan2(isImpact ? 0 : nextVy, isImpact ? 1 : nextVx) * 180) / Math.PI,
     stagesState: nextStagesState,
     phase: isImpact ? 'impactado' : eval1.phase,
   };
